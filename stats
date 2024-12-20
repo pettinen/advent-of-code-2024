@@ -1,0 +1,29 @@
+#!/bin/bash
+
+set -o errexit -o nounset -o pipefail
+shopt -s globstar
+
+cd "$(dirname "$0")"
+
+echo 'Lines of code:'
+wc -l **/*.rs
+
+echo
+echo 'Dependencies used:'
+for f in */Cargo.toml; do tail +7 $f; done | sort | uniq | cut -d' ' -f1
+
+echo
+
+for dir in day{01..25}; do
+    if [[ -d $dir ]]; then
+        pushd "$dir" > /dev/null
+        cargo build -r 2> /dev/null
+        result=$(
+            hyperfine -S none --input input "target/release/$dir" 2> /dev/null \
+	    | grep -Po '\d.+±\s+[\d.]+\s+\S+'
+        )
+	echo "$dir: $result"
+        #cargo clean 2> /dev/null
+        popd > /dev/null
+    fi
+done
