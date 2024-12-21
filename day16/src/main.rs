@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    cmp::Ordering,
+    collections::{BinaryHeap, HashMap, HashSet},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Square {
@@ -17,31 +20,39 @@ enum Direction {
 
 type Position = (usize, usize);
 
-fn parse() -> (HashMap<Position, Square>, Position, Position) {
-    let mut map = HashMap::new();
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct Vertex {
+    position: Position,
+    direction: Direction,
+}
+
+fn parse() -> (Vec<Vec<Square>>, Position, Position) {
+    let mut map = Vec::new();
     let mut start_pos = None;
     let mut end_pos = None;
 
     for (y, line) in std::io::stdin().lines().enumerate() {
+        let mut map_line = Vec::new();
         for (x, char) in line.unwrap().chars().enumerate() {
             match char {
                 'S' => {
                     start_pos = Some((x, y));
-                    map.insert((x, y), Square::Open);
+                    map_line.push(Square::Open);
                 }
                 'E' => {
                     end_pos = Some((x, y));
-                    map.insert((x, y), Square::End);
+                    map_line.push(Square::End);
                 }
                 '.' => {
-                    map.insert((x, y), Square::Open);
+                    map_line.push(Square::Open);
                 }
                 '#' => {
-                    map.insert((x, y), Square::Wall);
+                    map_line.push(Square::Wall);
                 }
                 char => panic!("unexpected character '{char}'"),
             }
         }
+        map.push(map_line);
     }
     (map, start_pos.unwrap(), end_pos.unwrap())
 }
@@ -62,157 +73,215 @@ fn print_map(map: &Vec<Vec<Square>>) {
     }
 }
 
-fn populate_scores(
-    map: &HashMap<Position, Square>,
-    scores: &mut HashMap<(usize, usize, Direction), u32>,
-) {
-    let keys = scores
-        .keys()
-        .filter_map(|&(x, y, _)| if x > 0 && y > 0 { Some((x, y)) } else { None })
-        .collect::<Vec<_>>();
-    for (x, y) in keys {
-        if map.get(&(x, y - 1)) == Some(&Square::Open) {
-            let (mut score_n, mut score_s, mut score_w, mut score_e) = {
-                let score = scores.get(&(x, y, Direction::South)).unwrap();
-                (score + 2001, score + 1, score + 1001, score + 1001)
-            };
+fn get_graph(map: &[Vec<Square>]) -> HashMap<Vertex, Vec<Vertex>> {
+    let mut graph = HashMap::new();
 
-            if let Some(score) = scores.get(&(x, y - 2, Direction::North)) {
-                score_n = score_n.min(score + 1);
-                score_s = score_s.min(score + 2001);
-                score_w = score_w.min(score + 1001);
-                score_e = score_e.min(score + 1001);
+    for y in 0..map.len() {
+        for x in 0..map[0].len() {
+            if !matches!(map[y][x], Square::Open | Square::End) {
+                continue;
             }
+            for direction in [
+                Direction::North,
+                Direction::South,
+                Direction::East,
+                Direction::West,
+            ] {
+                let mut neighbors = Vec::new();
 
-            if let Some(score) = scores.get(&(x - 1, y - 1, Direction::West)) {
-                score_n = score_n.min(score + 1001);
-                score_s = score_s.min(score + 1001);
-                score_w = score_w.min(score + 1);
-                score_e = score_e.min(score + 2001);
+                if direction == Direction::North || direction == Direction::South {
+                    neighbors.push(Vertex {
+                        position: (x, y),
+                        direction: Direction::West,
+                    });
+                    neighbors.push(Vertex {
+                        position: (x, y),
+                        direction: Direction::East,
+                    });
+                } else {
+                    neighbors.push(Vertex {
+                        position: (x, y),
+                        direction: Direction::North,
+                    });
+                    neighbors.push(Vertex {
+                        position: (x, y),
+                        direction: Direction::South,
+                    });
+                }
+
+                if direction == Direction::North
+                    && matches!(map[y - 1][x], Square::Open | Square::End)
+                {
+                    neighbors.push(Vertex {
+                        position: (x, y - 1),
+                        direction: Direction::North,
+                    });
+                } else if direction == Direction::South
+                    && matches!(map[y + 1][x], Square::Open | Square::End)
+                {
+                    neighbors.push(Vertex {
+                        position: (x, y + 1),
+                        direction: Direction::South,
+                    });
+                } else if direction == Direction::West
+                    && matches!(map[y][x - 1], Square::Open | Square::End)
+                {
+                    neighbors.push(Vertex {
+                        position: (x - 1, y),
+                        direction: Direction::West,
+                    });
+                } else if direction == Direction::East
+                    && matches!(map[y][x + 1], Square::Open | Square::End)
+                {
+                    neighbors.push(Vertex {
+                        position: (x + 1, y),
+                        direction: Direction::East,
+                    });
+                }
+
+                graph.insert(
+                    Vertex {
+                        position: (x, y),
+                        direction,
+                    },
+                    neighbors,
+                );
             }
-
-            if let Some(score) = scores.get(&(x + 1, y - 1, Direction::East)) {
-                score_n = score_n.min(score + 1001);
-                score_s = score_s.min(score + 1001);
-                score_w = score_w.min(score + 2001);
-                score_e = score_e.min(score + 1);
-            }
-
-            scores.insert((x, y - 1, Direction::North), score_n);
-            scores.insert((x, y - 1, Direction::South), score_s);
-            scores.insert((x, y - 1, Direction::West), score_w);
-            scores.insert((x, y - 1, Direction::East), score_e);
         }
+    }
 
-        if map.get(&(x, y + 1)) == Some(&Square::Open) {
-            let (mut score_n, mut score_s, mut score_w, mut score_e) = {
-                let score = scores.get(&(x, y, Direction::North)).unwrap();
-                (score + 1, score + 2001, score + 1001, score + 1001)
-            };
+    graph
+}
 
-            if let Some(score) = scores.get(&(x, y + 2, Direction::South)) {
-                score_n = score_n.min(score + 2001);
-                score_s = score_s.min(score + 1);
-                score_w = score_w.min(score + 1001);
-                score_e = score_e.min(score + 1001);
-            }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct VertexDistance {
+    position: Position,
+    direction: Direction,
+    distance: u32,
+}
 
-            if let Some(score) = scores.get(&(x - 1, y + 1, Direction::West)) {
-                score_n = score_n.min(score + 1001);
-                score_s = score_s.min(score + 1001);
-                score_w = score_w.min(score + 1);
-                score_e = score_e.min(score + 2001);
-            }
-
-            if let Some(score) = scores.get(&(x + 1, y + 1, Direction::East)) {
-                score_n = score_n.min(score + 1001);
-                score_s = score_s.min(score + 1001);
-                score_w = score_w.min(score + 2001);
-                score_e = score_e.min(score + 1);
-            }
-
-            scores.insert((x, y + 1, Direction::North), score_n);
-            scores.insert((x, y + 1, Direction::South), score_s);
-            scores.insert((x, y + 1, Direction::West), score_w);
-            scores.insert((x, y + 1, Direction::East), score_e);
-        }
-
-        if map.get(&(x - 1, y)) == Some(&Square::Open) {
-            let (mut score_n, mut score_s, mut score_w, mut score_e) = {
-                let score = scores.get(&(x, y, Direction::East)).unwrap();
-                (score + 1001, score + 1001, score + 2001, score + 1)
-            };
-
-            if let Some(score) = scores.get(&(x - 1, y - 1, Direction::North)) {
-                score_n = score_n.min(score + 1);
-                score_s = score_s.min(score + 2001);
-                score_w = score_w.min(score + 1001);
-                score_e = score_e.min(score + 1001);
-            }
-
-            if let Some(score) = scores.get(&(x - 1, y + 1, Direction::South)) {
-                score_n = score_n.min(score + 2001);
-                score_s = score_s.min(score + 1);
-                score_w = score_w.min(score + 1001);
-                score_e = score_e.min(score + 1001);
-            }
-
-            if let Some(score) = scores.get(&(x - 2, y, Direction::West)) {
-                score_n = score_n.min(score + 1001);
-                score_s = score_s.min(score + 1001);
-                score_w = score_w.min(score + 1);
-                score_e = score_e.min(score + 2001);
-            }
-
-            scores.insert((x - 1, y, Direction::North), score_n);
-            scores.insert((x - 1, y, Direction::South), score_s);
-            scores.insert((x - 1, y, Direction::West), score_w);
-            scores.insert((x - 1, y, Direction::East), score_e);
-        }
-
-        if map.get(&(x + 1, y)) == Some(&Square::Open) {
-            let (mut score_n, mut score_s, mut score_w, mut score_e) = {
-                let score = scores.get(&(x, y, Direction::West)).unwrap();
-                (score + 1001, score + 1001, score + 1, score + 2001)
-            };
-
-            if let Some(score) = scores.get(&(x + 1, y - 1, Direction::North)) {
-                score_n = score_n.min(score + 1);
-                score_s = score_s.min(score + 2001);
-                score_w = score_w.min(score + 1001);
-                score_e = score_e.min(score + 1001);
-            }
-
-            if let Some(score) = scores.get(&(x + 1, y + 1, Direction::South)) {
-                score_n = score_n.min(score + 2001);
-                score_s = score_s.min(score + 1);
-                score_w = score_w.min(score + 1001);
-                score_e = score_e.min(score + 1001);
-            }
-
-            if let Some(score) = scores.get(&(x + 2, y, Direction::East)) {
-                score_n = score_n.min(score + 1001);
-                score_s = score_s.min(score + 1001);
-                score_w = score_w.min(score + 2001);
-                score_e = score_e.min(score + 1);
-            }
-
-            scores.insert((x + 1, y, Direction::North), score_n);
-            scores.insert((x + 1, y, Direction::South), score_s);
-            scores.insert((x + 1, y, Direction::West), score_w);
-            scores.insert((x + 1, y, Direction::East), score_e);
-        }
+impl Ord for VertexDistance {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.distance.cmp(&self.distance)
     }
 }
 
+impl PartialOrd for VertexDistance {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn get_distances(graph: &HashMap<Vertex, Vec<Vertex>>, start: Vertex) -> HashMap<Vertex, u32> {
+    // Dijkstra's algorithm
+    let mut visited = HashSet::with_capacity(graph.len());
+    let mut all_distances = BinaryHeap::with_capacity(graph.len());
+    let mut distances = BinaryHeap::with_capacity(graph.len());
+
+    all_distances.push(VertexDistance {
+        position: start.position,
+        direction: start.direction,
+        distance: 0,
+    });
+    distances.push(VertexDistance {
+        position: start.position,
+        direction: start.direction,
+        distance: 0,
+    });
+
+    let mut previous = HashMap::new();
+
+    while let Some(VertexDistance {
+        position,
+        direction,
+        distance,
+    }) = distances.pop()
+    {
+        visited.insert(Vertex {
+            position,
+            direction,
+        });
+
+        for &neighbor in graph
+            .get(&Vertex {
+                position,
+                direction,
+            })
+            .unwrap()
+        {
+            if !visited.contains(&neighbor) {
+                let score = if direction == neighbor.direction {
+                    1
+                } else {
+                    1000
+                };
+                let alt = distance + score;
+
+                let neighbor_distance = distances
+                    .iter()
+                    .find(
+                        |VertexDistance {
+                             position,
+                             direction,
+                             ..
+                         }| {
+                            *position == neighbor.position && *direction == neighbor.direction
+                        },
+                    )
+                    .map(|&VertexDistance { distance, .. }| distance)
+                    .unwrap_or(u32::MAX);
+
+                if alt < neighbor_distance {
+                    all_distances.push(VertexDistance {
+                        position: neighbor.position,
+                        direction: neighbor.direction,
+                        distance: alt,
+                    });
+                    distances.push(VertexDistance {
+                        position: neighbor.position,
+                        direction: neighbor.direction,
+                        distance: alt,
+                    });
+                    previous.insert(
+                        neighbor,
+                        Vertex {
+                            position,
+                            direction,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    all_distances
+        .into_iter()
+        .map(
+            |VertexDistance {
+                 position,
+                 direction,
+                 distance,
+             }| {
+                (
+                    Vertex {
+                        position,
+                        direction,
+                    },
+                    distance,
+                )
+            },
+        )
+        .collect()
+}
+
 #[allow(dead_code)]
-fn print_scores(map: &HashMap<Position, Square>, scores: &HashMap<(usize, usize, Direction), u32>) {
+fn print_scores(map: &[Vec<Square>], scores: &HashMap<(usize, usize, Direction), u32>) {
     //std::thread::sleep(std::time::Duration::from_millis(10));
     print!("\x1B[1;1H\n\n\n\n");
-    for y in 0..=141 {
+    for y in 0..map.len() {
         print!(" ");
-        for x in 0..=141 {
-            if map.get(&(x, y)) == Some(&Square::Wall) {
+        for x in 0..map[0].len() {
+            if map[y][x] == Square::Wall {
                 print!("\u{2588}");
             } else if scores.contains_key(&(x, y, Direction::North)) {
                 print!("\u{2592}");
@@ -224,160 +293,94 @@ fn print_scores(map: &HashMap<Position, Square>, scores: &HashMap<(usize, usize,
     }
 }
 
-fn part1(map: &HashMap<Position, Square>, start_pos: Position, end_pos: Position) {
-    let mut scores = HashMap::new();
-    scores.insert((end_pos.0, end_pos.1, Direction::North), 0);
-    scores.insert((end_pos.0, end_pos.1, Direction::South), 0);
-    scores.insert((end_pos.0, end_pos.1, Direction::West), 0);
-    scores.insert((end_pos.0, end_pos.1, Direction::East), 0);
-
-    while scores.len()
-        < 4 * map
-            .values()
-            .filter(|square| matches!(square, Square::Open | Square::End))
-            .count()
-    {
-        populate_scores(map, &mut scores);
-    }
-
-    let score = scores
-        .get(&(start_pos.0, start_pos.1, Direction::East))
-        .unwrap();
-    println!("{score}");
-}
-
-fn get_next_best_paths(
-    scores: &HashMap<(usize, usize, Direction), u32>,
-    x: usize,
-    y: usize,
-    direction: Direction,
-) -> Vec<(usize, usize, Direction)> {
-    if scores.get(&(x, y, direction)) == Some(&0) {
-        return Vec::new();
-    }
-
-    let (score_n, score_s, score_w, score_e) = match direction {
-        Direction::North => (
-            scores
-                .get(&(x, y - 1, Direction::North))
-                .map(|score| score + 1),
-            scores
-                .get(&(x, y + 1, Direction::South))
-                .map(|score| score + 2001),
-            scores
-                .get(&(x - 1, y, Direction::West))
-                .map(|score| score + 1001),
-            scores
-                .get(&(x + 1, y, Direction::East))
-                .map(|score| score + 1001),
-        ),
-        Direction::South => (
-            scores
-                .get(&(x, y - 1, Direction::North))
-                .map(|score| score + 2001),
-            scores
-                .get(&(x, y + 1, Direction::South))
-                .map(|score| score + 1),
-            scores
-                .get(&(x - 1, y, Direction::West))
-                .map(|score| score + 1001),
-            scores
-                .get(&(x + 1, y, Direction::East))
-                .map(|score| score + 1001),
-        ),
-        Direction::West => (
-            scores
-                .get(&(x, y - 1, Direction::North))
-                .map(|score| score + 1001),
-            scores
-                .get(&(x, y + 1, Direction::South))
-                .map(|score| score + 1001),
-            scores
-                .get(&(x - 1, y, Direction::West))
-                .map(|score| score + 1),
-            scores
-                .get(&(x + 1, y, Direction::East))
-                .map(|score| score + 2001),
-        ),
-        Direction::East => (
-            scores
-                .get(&(x, y - 1, Direction::North))
-                .map(|score| score + 1001),
-            scores
-                .get(&(x, y + 1, Direction::South))
-                .map(|score| score + 1001),
-            scores
-                .get(&(x - 1, y, Direction::West))
-                .map(|score| score + 2001),
-            scores
-                .get(&(x + 1, y, Direction::East))
-                .map(|score| score + 1),
-        ),
-    };
-
-    let min = [score_n, score_s, score_w, score_e]
-        .into_iter()
-        .flatten()
+fn part1(distances: &HashMap<Vertex, u32>, end_pos: Position) -> u32 {
+    let score = distances
+        .iter()
+        .filter_map(|(Vertex { position, .. }, distance)| {
+            (*position == end_pos).then_some(*distance)
+        })
         .min()
         .unwrap();
-
-    let mut results = Vec::new();
-
-    if score_n == Some(min) {
-        results.push((x, y - 1, Direction::North));
-    }
-    if score_s == Some(min) {
-        results.push((x, y + 1, Direction::South));
-    }
-    if score_w == Some(min) {
-        results.push((x - 1, y, Direction::West));
-    }
-    if score_e == Some(min) {
-        results.push((x + 1, y, Direction::East));
-    }
-    results
+    println!("{score}");
+    score
 }
 
-fn part2(map: &HashMap<Position, Square>, start_pos: Position, end_pos: Position) {
-    let mut scores = HashMap::new();
-    scores.insert((end_pos.0, end_pos.1, Direction::North), 0);
-    scores.insert((end_pos.0, end_pos.1, Direction::South), 0);
-    scores.insert((end_pos.0, end_pos.1, Direction::West), 0);
-    scores.insert((end_pos.0, end_pos.1, Direction::East), 0);
+fn part2(
+    graph: &HashMap<Vertex, Vec<Vertex>>,
+    distances: &HashMap<Vertex, u32>,
+    end_pos: Position,
+    best_path_score: u32,
+) {
+    let mut on_best_path = HashSet::<Position>::with_capacity(distances.len() / 4);
 
-    while scores.len()
-        < 4 * map
-            .values()
-            .filter(|square| matches!(square, Square::Open | Square::End))
-            .count()
-    {
-        populate_scores(map, &mut scores);
-    }
+    let distances_from_end = [
+        get_distances(
+            graph,
+            Vertex {
+                position: end_pos,
+                direction: Direction::North,
+            },
+        ),
+        get_distances(
+            graph,
+            Vertex {
+                position: end_pos,
+                direction: Direction::South,
+            },
+        ),
+        get_distances(
+            graph,
+            Vertex {
+                position: end_pos,
+                direction: Direction::West,
+            },
+        ),
+        get_distances(
+            graph,
+            Vertex {
+                position: end_pos,
+                direction: Direction::East,
+            },
+        ),
+    ];
 
-    let mut best_paths = HashSet::new();
-    best_paths.insert(start_pos);
-    let mut current_best_paths = vec![(start_pos.0, start_pos.1, Direction::East)];
-    loop {
-        current_best_paths = current_best_paths
-            .into_iter()
-            .flat_map(|(x, y, direction)| get_next_best_paths(&scores, x, y, direction))
-            .collect();
-        if current_best_paths.is_empty() {
-            break;
+    for (&vertex, &distance) in distances {
+        let distance_to_end = distances_from_end
+            .iter()
+            .map(|distances| {
+                distances
+                    .get(&Vertex {
+                        position: vertex.position,
+                        direction: match vertex.direction {
+                            Direction::North => Direction::South,
+                            Direction::South => Direction::North,
+                            Direction::West => Direction::East,
+                            Direction::East => Direction::West,
+                        },
+                    })
+                    .unwrap()
+            })
+            .min()
+            .unwrap();
+
+        if distance + distance_to_end == best_path_score {
+            on_best_path.insert(vertex.position);
         }
-        best_paths.extend(
-            current_best_paths
-                .clone()
-                .into_iter()
-                .map(|(x, y, _)| (x, y)),
-        );
     }
 
-    println!("{}", best_paths.len());
+    println!("{}", on_best_path.len());
 }
 
 fn main() {
     let (map, start_pos, end_pos) = parse();
-    part1(&map, start_pos, end_pos);
-    part2(&map, start_pos, end_pos);
+    let graph = get_graph(&map);
+    let distances = get_distances(
+        &graph,
+        Vertex {
+            position: start_pos,
+            direction: Direction::East,
+        },
+    );
+    let best_path_score = part1(&distances, end_pos);
+    part2(&graph, &distances, end_pos, best_path_score);
 }
